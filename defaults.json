@@ -1,0 +1,12 @@
+{"Runs":1000,
+"AnnCum":"CUM",
+"Income":0.05,
+"Premium":0.0055,
+"WMFee":0.01,
+"DiscountRate":0.03,
+"MortSpreadsheet":"IAM20122581_2582.xlsx",
+"LapseUtilization":"Utilization2021_1_26.xlsx",
+"Stochastic":false,
+"Prudent":true,
+"Debug":false, 
+"YearOneIncome":1.0}
