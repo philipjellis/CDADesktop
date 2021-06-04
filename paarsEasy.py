@@ -3,9 +3,9 @@ import wx.html as wxhtml
 import os
 import pandas as pd
 import numpy as np
-import boto3
-import botocore
-from botocore.exceptions import ClientError
+#import boto3
+#import botocore
+#from botocore.exceptions import ClientError
 import paramiko
 import threading
 import time
@@ -20,36 +20,36 @@ import pickle
 from wx.lib import masked
 from scipy import stats
 from random import random
-import HTML
+from tabulate import tabulate
 from corr import standarderr
 
-WILDCARD = "Excel sheets (*.xls;*.xlsx)|*.xls;*.xlsxi"     
-IPADDRESS = "ec2-3-22-226-74.us-east-2.compute.amazonaws.com"
-HOMEDIR = '/home/test/working/' # NB home directory on Linux 
+WILDCARD = "Excel sheets (*.xls;*.xlsx)|*.xls;*.xlsx"     
+IPADDRESS = "azmlg01.southcentralus.cloudapp.azure.com"  #"ec2-3-22-226-74.us-east-2.compute.amazonaws.com"
+HOMEDIR = '/home/working/' # NB home directory on Linux 
 RESULTSDIR = HOMEDIR + 'results/' # NB home directory on Linux - these 2 not the Windows directories
-INSTANCE_ID = 'i-03889c587823b7ec5' 
+#INSTANCE_ID = 'i-03889c587823b7ec5' 
 
 class constants(object):
     pass
 K = constants()
 K.csvfiles=[]
 
-if getpass.getuser() == 'phjl': # then we are on amazon
-    PCDIRECTORY = 'd:/users/phjl/workdocs/CDALive/'
-    ROLLFORWARD = 'd:/users/phjl/workdocs/CDALive/DummyOutputSS.xlsx'
-    KEYFILE = 'd:/paars/CDALive/PJEAmazonJupyter.pem'
-    K.INDIR = 'd:/Users/Phjl/workdocs/CDALive/'
+if getpass.getuser() == 'pellis': # then we are on Azure
+    PCDIRECTORY = 'c:/PAARS/'
+    ROLLFORWARD = 'c:/PAARS/DummyOutputSS.xlsx'
+    KEYFILE = 'c:/PAARS/azmlg01_key.pem'
+    K.INDIR = 'c:/PAARS/' # the place where the raw economic scenario CSV files are store
 else:
-    PCDIRECTORY = 'w:/My Documents/CDALive/'
-    ROLLFORWARD = 'w:/My Documents/CDALive/DummyOutputSS.xlsx'
-    KEYFILE = 'w:/My Documents/PJEAmazonJupyter.pem'
-    K.INDIR = 'w:/My Documents/CDALive/'
+    print('Yikes - what happened to the Azure login.  Whoareyou?')
+    #PCDIRECTORY = 'c:/PAARS/'
+    #ROLLFORWARD = 'c:/PAARS/DummyOutputSS.xlsx'
+    #KEYFILE = 'c:/PAARS/azmlg01_key.pem'
+    #K.INDIR = 'c:/PAARS/'
 
 KEY = paramiko.RSAKey.from_private_key_file(KEYFILE)
 CLIENT = paramiko.SSHClient()
 CLIENT.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-EC2 = boto3.client('ec2')
-AppBaseClass = wx.App
+#EC2 = boto3.client('ec2')
 
 def flt(s):
     try:
@@ -114,7 +114,6 @@ def blendo(parent, data, indir, outdir, fname, error, pftype): # default error i
     sds = error * abs(sumbalret)
     e1 = np.random.normal(sumbalret,sds)
     e2 = pd.DataFrame(e1)
-    #1/0
     errs = round(e2,6)
     errs.columns = sumbalret.columns
     balgro = 1 + sumbalret
@@ -127,15 +126,16 @@ def blendo(parent, data, indir, outdir, fname, error, pftype): # default error i
     #outputbalfund.to_csv(outdir + '//' + fname +'raw.csv', header=False, index=False)
     outputerrbal = round(errbalfundval[cols_needed],6)
     #outputerrbal.insert(0,-1,1)
-    outputerrbal.to_csv(outdir + '//' + fname, header = False, index = False)
+    outputerrbal.to_csv(outdir + fname, header = False, index = False)
     #round(sumbalret,6).to_csv(outdir + '//' + fname + 'returns.csv', header = False, index = False)
     #round(errs,6).to_csv(outdir + '//' + fname + 'returnserr.csv', header = False, index = False)
 
 class SummaryResult(wx.Dialog): 
-    def __init__(self, parent, htstring): 
+    def __init__(self, parent): 
         super(SummaryResult, self).__init__(parent, title = 'Summary Results', size = (1100,300)) 
         panel = wx.Panel(self) 
 		# get and format the results
+        self.K = parent.K
         self.rslt = self.getresults()
         self.btn = wx.Button(panel, wx.ID_OK, label = "ok") #, size = (50,50)) #, pos = (75,50))
         txt_style = wx.VSCROLL|wx.HSCROLL|wx.TE_READONLY|wx.BORDER_SIMPLE
@@ -148,12 +148,12 @@ class SummaryResult(wx.Dialog):
         panel.Layout()
 		
     def getresults(self):
-        scenarios = json.load(open(self.outdir + '\\' + 'scenario.json'))
+        scenarios = json.load(open(self.K.outdir + 'scenario.json'))
         names = scenarios.keys()
         descs = [v['Description'] for v in scenarios.values()]
         resultsdata = OrderedDict()
         for n,d in zip(names,descs):
-            fn = self.outdir + '/table_' + n + '.P'
+            fn = self.K.outdir + 'table_' + n + '.P'
             results = (pickle.load(open(fn,'rb')))
             results['Description'] = d
             resultsdata[n] = results
@@ -165,7 +165,7 @@ class SummaryResult(wx.Dialog):
         ix.insert(0,'Description') # is there a better way???
         resultsdf_ = resultsdf.reindex(ix) # now description is at top
         dft = resultsdf_.T
-        dft.to_excel(self.outdir + '/ResultsTable.xlsx')
+        dft.to_excel(self.K.outdir + 'ResultsTable.xlsx')
         return dft
 
     def formatresults(self):
@@ -182,6 +182,7 @@ class SummaryResult(wx.Dialog):
                 fstr = "{0}"
             self.rslt[k] = [fstr.format(i) for i in self.rslt[k]]
 
+"""
 def getamastate():
     alpha = 255
     response = EC2.describe_instances(
@@ -223,6 +224,7 @@ def stopamazon():
         #print(response)
     except ClientError as e:
         print(e)
+"""
 
 class Monty(object): # Start the Monte Carlo process
 
@@ -238,14 +240,22 @@ class Monty(object): # Start the Monte Carlo process
             u.start()
         else:
             self.parent.frame.msg(self.msg)
-	
+
+    def connectme(self):
+        CLIENT.connect(hostname=IPADDRESS, username="meritmodeling", pkey=KEY)
+
+    def commandme(self,cmd):
+        self.stdin, self.stdout, self.stderr = CLIENT.exec_command(cmd)
+
+    def closeme(self):
+        CLIENT.close()
+
     def sendfile(self):
         self.msg = '' # this is the message to go in the message line if anything fails
         scenario_names = self.scenarios.keys()
-        if self.K.outdir[-1] not in ['\\','/']: self.K.outdir += '/'
         try: # step 1 check the connection
-            CLIENT.connect(hostname=IPADDRESS, username="ubuntu", pkey=KEY)
-            CLIENT.exec_command('rm /home/test/working/results/*')
+            self.connectme()
+            self.commandme('./remover.sh')
             ftp_client=CLIENT.open_sftp()
         except:
             self.msg += 'Failed to find server.\n'
@@ -258,7 +268,7 @@ class Monty(object): # Start the Monte Carlo process
                 self.msg += 'Failed to send' + filenm + '\n'
         # done processing the files.  Close the connection.
         ftp_client.close()
-        CLIENT.close()
+        self.closeme()
         if self.msg == '':
             self.parent.frame.SetStatusText('Files sent')
         else:
@@ -266,31 +276,32 @@ class Monty(object): # Start the Monte Carlo process
 
     def getfile(self):
         try:
-            CLIENT.connect(hostname=IPADDRESS, username="ubuntu", pkey=KEY)
+            self.connectme()
             ftp_client=CLIENT.open_sftp()
             fs = ftp_client.listdir(RESULTSDIR)
             for f in fs:
-                ftp_client.get(RESULTSDIR + f, K.outdir + '\\' + f)
+                ftp_client.get(RESULTSDIR + f, K.outdir +  f)
             ftp_client.close()
-            CLIENT.close()
+            self.closeme()
             self.parent.frame.SetStatusText('Files retrieved')
         except:
             self.parent.frame.msg('Failed at get file')
 
     def worker(self):
         try:
-            CLIENT.connect(hostname=IPADDRESS, username="ubuntu", pkey=KEY)
-            stdin, stdout, stderr = CLIENT.exec_command('./mp9starter.sh')
-            CLIENT.close()
+            self.connectme()
+            self.commandme('./mp9starter.sh')
+            self.closeme()
             self.parent.frame.SetStatusText('Process started on Amazon')
         except :
             self.parent.frame.msg('Worker failed')
 
     def getupdate(self):
-        CLIENT.connect(hostname=IPADDRESS, username="ubuntu", pkey=KEY)
-        stdin, stdout, stderr = CLIENT.exec_command('tail ' + RESULTSDIR + 'output.txt')
-        output = stdout.readlines()
-        CLIENT.close()
+        self.connectme()
+        #stdin, stdout, stderr = CLIENT.exec_command('tail ' + RESULTSDIR + 'output.txt')
+        self.commandme('tail ' + RESULTSDIR + 'output.txt')
+        output = self.stdout.readlines()
+        self.closeme()
         if len(output) > 0:
             lastline = output[-1]
         else:
@@ -316,8 +327,8 @@ class Paars(wx.Panel):
         # Create the menubar and menu
         self.frame = frame 
         #empty data
-        self.fn, self.outdir = None, None
         self.K = K
+        self.K.stdfn, self.K.outdir = None, None
         self.status  = 'ok'
         self.census =  'census.json'
         self.scenario =  'scenario.json'
@@ -329,11 +340,11 @@ class Paars(wx.Panel):
         text = wx.StaticText(panel, -1, "Merit Insurance - Monte Carlo portfolio simulation")
         text.SetFont(wx.Font(14, wx.SWISS, wx.NORMAL, wx.BOLD))
         text.SetSize(text.GetBestSize())
-        self.state,self.color = getamastate()
-        self.statebtn = wx.ToggleButton(panel,-1,self.state)
-        self.statebtn.SetBackgroundColour(self.color)       
-        self.Bind(wx.EVT_TOGGLEBUTTON,self.switchamazon,self.statebtn)
-        self.statetext= wx.StaticText(panel, -1, "Click to switch Amazon on or off.  Currently...")
+        #self.state,self.color = getamastate()
+        #self.statebtn = wx.ToggleButton(panel,-1,self.state)
+        #self.statebtn.SetBackgroundColour(self.color)       
+        #self.Bind(wx.EVT_TOGGLEBUTTON,self.switchamazon,self.statebtn)
+        #self.statetext= wx.StaticText(panel, -1, "Click to switch Amazon on or off.  Currently...")
         #Now the filename and output directory
         self.rftext = wx.StaticText(panel, -1, "RollForward Spreadsheet "+ROLLFORWARD)
         self.rftext.SetFont(wx.Font(8, wx.SWISS, wx.NORMAL, wx.BOLD))
@@ -357,8 +368,8 @@ class Paars(wx.Panel):
         sizer.Add(self.sstext, 0, wx.ALL, 10)
         sizer.Add(self.dirtext, 0, wx.ALL, 10)
         sizer.Add(txt)
-        sizer.Add(self.statetext, 0, wx.LEFT, 10)
-        sizer.Add(self.statebtn, 0, wx.ALL, 10)
+        #sizer.Add(self.statetext, 0, wx.LEFT, 10)
+        #sizer.Add(self.statebtn, 0, wx.ALL, 10)
         sizer.Add(txta)
         sizer.Add(infil, 0, wx.ALL, 10)
         sizer.Add(outdir, 0, wx.ALL, 10)
@@ -379,7 +390,7 @@ class Paars(wx.Panel):
         #print(self.state)
         self.statebtn.SetBackgroundColour(self.color)
         self.statebtn.SetLabel(self.state)
-
+    """
     def switchamazon(self,evt):
         if self.state == 'running':
             stopamazon()
@@ -393,7 +404,7 @@ class Paars(wx.Panel):
             self.setstate()
             time.sleep(5)
         self.setstate()
-
+    """
     def choosefile(self, evt):
         dlg = wx.FileDialog(
             self, message="Choose a file",
@@ -406,25 +417,27 @@ class Paars(wx.Panel):
             )
         if dlg.ShowModal() == wx.ID_OK:
             path = dlg.GetPath()
-            self.fn = path
-            self.justthename = self.fn.split('\\')[-1]
-            self.sstext.SetLabel("Input Spreadsheet: " + self.fn)
+            self.K.stdfn = path
+            #self.K.stdfile = self.K.stdfn.split('\\')[-1]
+            self.sstext.SetLabel("Input Spreadsheet: " + self.K.stdfn)
         dlg.Destroy()
         self.frame.SetStatusText('Input spreadsheet chosen.  Step 1 complete.')
 
     def do_spreadsheet(self):
-        if self.fn and self.outdir:
-            self.dfsc = pd.read_excel(self.fn,'Scenarios',index_col=0)
+        if self.K.stdfn and self.K.outdir:
+            self.dfsc = pd.read_excel(self.K.stdfn,'Scenarios',index_col=0)
             self.dfsc.columns = [i.replace(' ','') for i in self.dfsc.columns]
             for col in self.dfsc.columns: # copy the rollforward spreadsheet for each run
                 rollforward = col + '.xlsx'
-                shutil.copy(ROLLFORWARD, self.K.outdir + fn)
+                shutil.copy(ROLLFORWARD, self.K.outdir + rollforward)
+                #print(ROLLFORWARD, self.K.outdir + rollforward)
             def_f = open(PCDIRECTORY + 'defaults.json')
             defaults = json.load(def_f)
             for k,v in defaults.items():
                 if k not in self.dfsc.index: # if default value is already there, do not override
                     self.dfsc.loc[k] = v
-            self.scenario_json = self.dfsc.to_json()
+            self.scenario_dick = self.dfsc.to_dict()
+            self.dfsc.to_json(self.K.outdir + '\\' + self.scenario)
             self.frame.SetStatusText('Spreadsheet processed')
         else:
             self.frame.msg('You have not selected a spreadsheet and output directory yet')
@@ -437,16 +450,16 @@ class Paars(wx.Panel):
                           style=wx.DD_DEFAULT_STYLE
                            )
         if dlg.ShowModal() == wx.ID_OK:
-            self.K.outdir = dlg.GetPath()
-            self.dirtext.SetLabel("Output Directory: " + self.outdir)
+            self.K.outdir = dlg.GetPath() + '\\'
+            self.dirtext.SetLabel("Output Directory: " + self.K.outdir)
         dlg.Destroy()
         self.frame.SetStatusText('Directory chosen,  Step 2 complete.')
 
     def process(self, evt):
         self.processbtn.Disable()
         self.do_spreadsheet()
-        self.moverollforward()
-        montecarlo = Monty(self,self.scenario_json,self.K)
+        #self.moverollforward()
+        montecarlo = Monty(self,self.scenario_dick,self.K)
 
 
 class Blendo(wx.Panel):
@@ -455,7 +468,7 @@ class Blendo(wx.Panel):
         self.parent = parent # refers back to the notebook
         self.K = K
         self.frame = frame
-        self.outdir = '...'
+        self.K.outdir = '...'
         self.setuppath = '...' 
         self.vs = wx.StaticText(self, -1,'',(20,170))
         self.makesttext()
@@ -483,7 +496,7 @@ class Blendo(wx.Panel):
         self.Layout()
 
     def makesttext(self):
-        self.status = 'Portfolio setup files in ' + self.setuppath +'\nOutput csv file in ' + self.outdir
+        self.status = 'Portfolio setup files in ' + self.setuppath +'\nOutput csv file in ' + self.K.outdir
         self.vs.SetLabel(self.status)
    
     def onRadioBox(self,e): 
@@ -531,7 +544,7 @@ class Blendo(wx.Panel):
             if test == 1.0:
                 outputtab = [[i[0],"{:.2f}%".format(100*i[1])] for i in trial]
                 msg= '<html><body><h1>Blending File Data</h1>'
-                msg += HTML.table(outputtab,header_row=['Asset','File','Weight %'])
+                msg += tabulate(outputtab,['Asset','File','Weight %'],tablefmt='html')
                 msg += '<p>Sum of weights = ' + "{:.2f}%".format(100*test) + '</p>'
                 msg += '<p>Error = ' + "{:.2f}%".format(100*error) + '</p>'
                 outfilenm = self.setuppath.split('\\')[-1].replace(' ','')
@@ -544,7 +557,7 @@ class Blendo(wx.Panel):
                 msg += '<p>Close this window to process the file.</p>'
                 msg +='</body></html>'
                 htmlmsg("Blending file is ok...",msg)
-                blendo(self, trial, self.K.blendir, self.outdir, outfilenm, error, self.filetype)
+                blendo(self, trial, self.K.blendir, self.K.outdir, outfilenm, error, self.filetype)
                 self.frame.msg(outfilenm + ' created')
             else:
                 msg = 'Portfolio totals do not equal 100% in weights.  Please fix and try again.'
@@ -567,7 +580,7 @@ class Blendo(wx.Panel):
                           style=wx.DD_DEFAULT_STYLE
                            )
         if dlg.ShowModal() == wx.ID_OK:
-            self.outdir = dlg.GetPath()
+            self.K.outdir = dlg.GetPath() + '\\'
             self.makesttext()
         dlg.Destroy()
 
@@ -586,7 +599,7 @@ class Easy(wx.Panel):
                 'MSCI_EM_Emerging_Markets_USD', 'MSCI_EAFE', 'Style_R_Squared', 'Predicted_R_Squared'])
         self.K = K
         self.frame = frame
-        self.K.outdir = 'w:/My Documents/CDALive/test/'
+        self.K.outdir = 'c:/PAARS/Portfolios/easy/'
         self.vs = wx.StaticText(self, -1,'',(20,170))
         self.makesttext()
         self.dirout = wx.Button(self, -1, "1. Choose the output directory", (50,50))
@@ -803,14 +816,14 @@ class MainFrame(wx.Frame):
         p.Fit()
 
     def OnClose(self, event):
-        self.state,self.color = getamastate()
+        #self.state,self.color = getamastate()
         #if event.CanVeto() and self.state in ['Running','Pending']:
-        if self.state in ['running','pending']:
-            if wx.MessageBox("The environment has not been stopped... continue closing?",
-                "Please confirm",
-                wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
-                event.Veto()
-                return
+        #if self.state in ['running','pending']:
+        #    if wx.MessageBox("The environment has not been stopped... continue closing?",
+        #        "Please confirm",
+        #        wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
+        #        event.Veto()
+        #        return
         self.Destroy()  # you may also do:  event.Skip()
 			# since the default event handler does call Destroy(), too
 

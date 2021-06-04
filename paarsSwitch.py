@@ -20,7 +20,7 @@ import pickle
 from wx.lib import masked
 from scipy import stats
 from random import random
-import HTML
+from tabulate import tabulate
 # NEWPAARS.py
 wildcard = "Excel sheets (*.xls;*.xlsx)|*.xls;*.xlsxi"     
 #           "All files (*.*)|*.*"
@@ -47,7 +47,6 @@ key = paramiko.RSAKey.from_private_key_file(KEYFILE)
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 ec2 = boto3.client('ec2')
-AppBaseClass = wx.App
 
 aboutText = """<p>Sorry, there is no information about this program. It is
 running on version %(wxpy)s of <b>wxPython</b> and %(python)s of <b>Python</b>.
@@ -547,7 +546,7 @@ class Blendo(wx.Panel):
             if test == 1.0:
                 outputtab = [[i[0],"{:.2f}%".format(100*i[1])] for i in trial]
                 msg= '<html><body><h1>Blending File Data</h1>'
-                msg += HTML.table(outputtab,header_row=['Asset','File','Weight %'])
+                msg += tabulate(outputtab,['Asset','File','Weight %'],tablefmt='html')
                 msg += '<p>Sum of weights = ' + "{:.2f}%".format(100*test) + '</p>'
                 msg += '<p>Error = ' + "{:.2f}%".format(100*error) + '</p>'
                 outfilenm = self.setuppath.split('\\')[-1].replace(' ','')
