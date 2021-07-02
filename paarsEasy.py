@@ -3,9 +3,6 @@ import wx.html as wxhtml
 import os
 import pandas as pd
 import numpy as np
-#import boto3
-#import botocore
-#from botocore.exceptions import ClientError
 import paramiko
 import threading
 import time
@@ -22,12 +19,20 @@ from scipy import stats
 from random import random
 from tabulate import tabulate
 from corr import standarderr
+import dataframe_image as dfi
+from pptx import Presentation
+from pptx.util import Inches
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mtick
+from shutil import copyfile
 
 WILDCARD = "Excel sheets (*.xls;*.xlsx)|*.xls;*.xlsx"     
 IPADDRESS = "azmlg01.southcentralus.cloudapp.azure.com"  #"ec2-3-22-226-74.us-east-2.compute.amazonaws.com"
 HOMEDIR = '/home/working/' # NB home directory on Linux 
 RESULTSDIR = HOMEDIR + 'results/' # NB home directory on Linux - these 2 not the Windows directories
 #INSTANCE_ID = 'i-03889c587823b7ec5' 
+DEBUG = False 
 
 class constants(object):
     pass
@@ -35,9 +40,9 @@ K = constants()
 K.csvfiles=[]
 
 if getpass.getuser() == 'pellis': # then we are on Azure
-    PCDIRECTORY = 'c:/PAARS/'
-    ROLLFORWARD = 'c:/PAARS/DummyOutputSS.xlsx'
-    KEYFILE = 'c:/PAARS/azmlg01_key.pem'
+    PCDIRECTORY = 'c:/PAARS/CDADesktop/'
+    ROLLFORWARD = 'c:/PAARS/CDADesktop/DummyOutputSS.xlsx'
+    KEYFILE = 'c:/PAARS/CDADesktop/azmlg01_key.pem'
     K.INDIR = 'c:/PAARS/' # the place where the raw economic scenario CSV files are store
 else:
     print('Yikes - what happened to the Azure login.  Whoareyou?')
@@ -49,7 +54,6 @@ else:
 KEY = paramiko.RSAKey.from_private_key_file(KEYFILE)
 CLIENT = paramiko.SSHClient()
 CLIENT.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-#EC2 = boto3.client('ec2')
 
 def flt(s):
     try:
@@ -57,6 +61,82 @@ def flt(s):
     except:
         result = s
     return result 
+
+def results_pic():
+    #  create results table picture for putting at the end of the powerpoint file
+    def sty(colname):
+        if '$' in colname:
+            return "${:,.0f}"
+        if '%' in colname:
+            return "{:.2f}%"
+        if "year" in colname.lower():
+            return "{:.0f}"
+        if "number" in colname.lower():
+            return "{:,.0f}"
+        return "{}"
+    t1 = 'ResultsTable.xlsx'
+    #try: should not be possible can only get here after creating resultstable.xlsx
+    df = pd.read_excel(t1,index_col=0)
+    #except:
+    #    return 'Fail'
+    wanted_cols=['CTE 0 NPV CF $','CTE 70 $','CTE 98 $','C3P2 $','800RBC %','Worst NPV CF $']
+    df = df[wanted_cols]
+    styledict=dict((i,sty(i)) for i in df.columns)
+    df2 = df.style.format(styledict)
+    dfi.export(df2,'resultstable.png')
+    return # used to return 'ok' if it did not fail above.  Nn now
+
+def histo():
+    # create 2 histograms with the spectrum of cashflows for putting at the end of the powerpoint
+    pickledick = {}
+    for fil in glob.glob('spectrumthisy' + '*.p'):
+        pieces = fil[:-2].split('_') # remove the .p the last two chars
+        nm = pieces[1]
+        if len(pieces) > 2:
+            sex = pieces[2][0]
+            age = pieces[2][1:3]
+            lis = [nm,age,sex]
+        else:
+            lis = [nm]
+        name = '_'.join(lis)
+        pickledick[name] = pickle.load(open(fil,"rb"))
+    graphnames = []
+    for k,v in pickledick.items():
+        fig, ax = plt.subplots(figsize=(20,20))
+        sns.displot(v/1000,kde=False,bins=40)
+        titstr = 'Distribution of NPV Cashflows for '+k+' Fund ($000)'
+        plt.title(titstr,fontsize=6)
+        #ax.figure.tight_layout()
+        filename = k + 'CashflowHistogram.png'
+        graphnames.append(filename)
+        plt.savefig(filename)
+    graphnames.sort() # get 1 first and 2 next, for layout in orderly fashion
+    return graphnames
+
+def outputppt(destination):
+    # add the monte carlo summary analysis to the end of the powerpoint file
+    # Get the powerpoint file - whatever the first one is!
+    try:
+        pptfile =  glob.glob(destination + '*.pptx')[0]
+    except:
+        pptfile = destination + 'montecarlo.ppt'
+        copyfile('c:/users/pellis/desktop/blankpres.ppt', pptfile)
+    prs = Presentation(pptfile)
+    blank_slide_layout = prs.slide_layouts[6]
+    slide = prs.slides.add_slide(blank_slide_layout)
+
+    top,left = Inches(0.5), Inches(2)
+    slide.shapes.add_picture('c:/PAARS/CDADesktop/MonteCarlo.png', left, top)
+    top, left = Inches(2), Inches(4)
+    slide.shapes.add_picture('resultstable.png', left, top,height=Inches(1))
+    topinch, leftinch = 4, 1
+    for gn in graphnames:
+        top = Inches(topinch)
+        left = Inches(leftinch)
+        pic = slide.shapes.add_picture(gn, left, top, height=Inches(2.5),width=Inches(4))
+        leftinch += 5
+    prs.save(pptfile)
+    return(pptfile)
 
 class MyHtmlFrame(wx.Dialog):
     # Simple HTML message
@@ -130,6 +210,7 @@ def blendo(parent, data, indir, outdir, fname, error, pftype): # default error i
     #round(sumbalret,6).to_csv(outdir + '//' + fname + 'returns.csv', header = False, index = False)
     #round(errs,6).to_csv(outdir + '//' + fname + 'returnserr.csv', header = False, index = False)
 
+
 class SummaryResult(wx.Dialog): 
     def __init__(self, parent): 
         super(SummaryResult, self).__init__(parent, title = 'Summary Results', size = (1100,300)) 
@@ -137,6 +218,7 @@ class SummaryResult(wx.Dialog):
 		# get and format the results
         self.K = parent.K
         self.rslt = self.getresults()
+        self.formatresults()
         self.btn = wx.Button(panel, wx.ID_OK, label = "ok") #, size = (50,50)) #, pos = (75,50))
         txt_style = wx.VSCROLL|wx.HSCROLL|wx.TE_READONLY|wx.BORDER_SIMPLE
         htwin = wxhtml.HtmlWindow(panel, -1, size=(1200, 1200), style=txt_style)
@@ -181,49 +263,49 @@ class SummaryResult(wx.Dialog):
             else:
                 fstr = "{0}"
             self.rslt[k] = [fstr.format(i) for i in self.rslt[k]]
-
 """
-def getamastate():
-    alpha = 255
-    response = EC2.describe_instances(
-        Filters=[],InstanceIds=[INSTANCE_ID],)
-    state = response['Reservations'][0]['Instances'][0]['State']['Name'] 
-    if state == 'running':
-        color = (0,255,0,alpha)
-    elif state == 'stopped':
-        color = (255,0,0,alpha)
-    else:
-        color = (255,153,51)
-    return state,color
 
-def startamazon():
-    # Do a dryrun first to verify permissions
-    try:
-        EC2.start_instances(InstanceIds=[INSTANCE_ID], DryRun=True)
-    except ClientError as e:
-        if 'DryRunOperation' not in str(e):
-            raise
-    # Dry run succeeded, run start_instances without dryrun
-    try:
-        response = EC2.start_instances(InstanceIds=[INSTANCE_ID], DryRun=False)
-        #print(response)
-    except ClientError as e:
-        print(e)
-    time.sleep(1)
+class SummaryResult(object): 
+    def __init__(self, parent): 
+        self.K = parent.K
+        self.rslt = self.getresults()
+        self.formatresults()
+        htmlmsg('Results Table',self.rslt.to_html())
+		
+    def getresults(self):
+        scenarios = json.load(open(self.K.outdir + 'scenario.json'))
+        names = scenarios.keys()
+        descs = [v['Description'] for v in scenarios.values()]
+        resultsdata = OrderedDict()
+        for n,d in zip(names,descs):
+            fn = self.K.outdir + 'table_' + n + '.P'
+            results = (pickle.load(open(fn,'rb')))
+            results['Description'] = d
+            resultsdata[n] = results
+        resultsdf = pd.DataFrame(resultsdata)
+        ix = list(resultsdf.index)
+        # remove Description from wherever it is
+        descrix = ix.index('Description')
+        ix.pop(descrix)
+        ix.insert(0,'Description') # is there a better way???
+        resultsdf_ = resultsdf.reindex(ix) # now description is at top
+        dft = resultsdf_.T
+        dft.to_excel(self.K.outdir + 'ResultsTable.xlsx')
+        return dft
 
-def stopamazon():
-    # Do a dryrun first to verify permissions
-    try:
-        EC2.stop_instances(InstanceIds=[INSTANCE_ID], DryRun=True)
-    except ClientError as e:
-        if 'DryRunOperation' not in str(e):
-            raise
-    # Dry run succeeded, call stop_instances without dryrun
-    try:
-        response = EC2.stop_instances(InstanceIds=[INSTANCE_ID], DryRun=False)
-        #print(response)
-    except ClientError as e:
-        print(e)
+    def formatresults(self):
+        for k in self.rslt.columns:
+            if '%' in k:
+                fstr = "{:.2f}%"
+            elif '$' in k:
+                fstr = "${:,.0f}"
+            elif 'year' in k.lower():
+                fstr = "{:.0f}"
+            elif 'number' in k.lower():
+                fstr = "{:,.0f}"
+            else:
+                fstr = "{0}"
+            self.rslt[k] = [fstr.format(i) for i in self.rslt[k]]
 """
 
 class Monty(object): # Start the Monte Carlo process
@@ -245,7 +327,15 @@ class Monty(object): # Start the Monte Carlo process
         CLIENT.connect(hostname=IPADDRESS, username="meritmodeling", pkey=KEY)
 
     def commandme(self,cmd):
-        self.stdin, self.stdout, self.stderr = CLIENT.exec_command(cmd)
+        stdin, stdout, stderr = CLIENT.exec_command(cmd)
+        if DEBUG:
+            print('cmd',cmd)
+            self.pri('stdout',stdout)
+            self.pri('stderr',stderr)
+
+    def pri(self, ide, rptr):
+        print(ide)
+        for i in rptr: print(i)
 
     def closeme(self):
         CLIENT.close()
@@ -255,20 +345,21 @@ class Monty(object): # Start the Monte Carlo process
         scenario_names = self.scenarios.keys()
         try: # step 1 check the connection
             self.connectme()
-            self.commandme('./remover.sh')
-            ftp_client=CLIENT.open_sftp()
         except:
             self.msg += 'Failed to find server.\n'
-        filestogo = glob.glob(self.K.outdir + '*')
-        for f in filestogo:
-            filenm = f.split('\\')[-1]
-            try:
-                ftp_client.put(self.K.outdir + filenm, RESULTSDIR + filenm)
-            except:
-                self.msg += 'Failed to send' + filenm + '\n'
-        # done processing the files.  Close the connection.
-        ftp_client.close()
-        self.closeme()
+        else:
+            self.commandme('rm /home/working/results/*')
+            ftp_client=CLIENT.open_sftp()
+            filestogo = glob.glob(self.K.outdir + '*')
+            for f in filestogo:
+                filenm = f.split('\\')[-1]
+                try:
+                    ftp_client.put(self.K.outdir + filenm, RESULTSDIR + filenm)
+                except:
+                    self.msg += 'Failed to send' + filenm + '\n'
+            # done processing the files.  Close the connection.
+            ftp_client.close()
+            self.closeme()
         if self.msg == '':
             self.parent.frame.SetStatusText('Files sent')
         else:
@@ -292,15 +383,14 @@ class Monty(object): # Start the Monte Carlo process
             self.connectme()
             self.commandme('./mp9starter.sh')
             self.closeme()
-            self.parent.frame.SetStatusText('Process started on Amazon')
+            self.parent.frame.SetStatusText('Process started on Microsoft Azure')
         except :
             self.parent.frame.msg('Worker failed')
 
     def getupdate(self):
         self.connectme()
-        #stdin, stdout, stderr = CLIENT.exec_command('tail ' + RESULTSDIR + 'output.txt')
-        self.commandme('tail ' + RESULTSDIR + 'output.txt')
-        output = self.stdout.readlines()
+        stdin, stdout, stderr = CLIENT.exec_command('tail ' + RESULTSDIR + 'output.txt')
+        output = stdout.readlines()
         self.closeme()
         if len(output) > 0:
             lastline = output[-1]
@@ -361,7 +451,7 @@ class Paars(wx.Panel):
         self.Bind(wx.EVT_BUTTON, self.process, self.processbtn)
         rslt = wx.Button(panel, -1, "4. Show Summary Results...")
         self.Bind(wx.EVT_BUTTON, self.xldisplay, rslt)
-        # Use a sizer to layout the controls, stacked vertically 10 pix border
+        # Use a sizer to layout the controls
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(text, 0, wx.ALL, 10)
         sizer.Add(self.rftext, 0, wx.ALL, 10)
@@ -390,21 +480,7 @@ class Paars(wx.Panel):
         #print(self.state)
         self.statebtn.SetBackgroundColour(self.color)
         self.statebtn.SetLabel(self.state)
-    """
-    def switchamazon(self,evt):
-        if self.state == 'running':
-            stopamazon()
-            self.state = 'stopping'
-        if self.state == 'stopped':
-            startamazon()
-        time.sleep(1)
-        if self.state != 'stopping':
-            self.state,self.color = getamastate()
-        while self.state not in ['running','stopped','stopping']:
-            self.setstate()
-            time.sleep(5)
-        self.setstate()
-    """
+
     def choosefile(self, evt):
         dlg = wx.FileDialog(
             self, message="Choose a file",
@@ -506,7 +582,7 @@ class Blendo(wx.Panel):
         df = pd.read_excel(self.setuppath,index_col=0,skiprows=1)
         self.filetype = self.rbox.GetStringSelection()
         if self.filetype == 'Conning':
-            self.K.blendir = self.K.INDIR + 'ConningDec2019/'
+            self.K.blendir = self.K.INDIR + 'ConningDec2020/'
         else:
             self.K.blendir = self.K.INDIR +  'AAACSV/'
         fail=False
@@ -602,15 +678,23 @@ class Easy(wx.Panel):
         self.K.outdir = 'c:/PAARS/Portfolios/easy/'
         self.vs = wx.StaticText(self, -1,'',(20,170))
         self.makesttext()
-        self.dirout = wx.Button(self, -1, "1. Choose the output directory", (50,50))
-        self.Bind(wx.EVT_BUTTON, self.chooseoutdirectory, self.dirout)
-        self.Paste = wx.Button(self, -1, "2. Paste MPI Data")
-        self.Bind(wx.EVT_BUTTON, self.paste, self.Paste)
+        self.Dirout = wx.Button(self, -1, "1. Choose the output directory", (50,50))
+        self.Bind(wx.EVT_BUTTON, self.chooseoutdirectory, self.Dirout)
+        self.AAAPaste = wx.Button(self, -1, "2. Paste AAA Style MPI Data")
+        self.Bind(wx.EVT_BUTTON, self.aaapaste, self.AAAPaste)
+        # PJE leave this in - we might want Conning assets in future
+        #self.ConningPaste = wx.Button(self, -1, "3. Paste Conning Style MPI Data")
+        #self.Bind(wx.EVT_BUTTON, self.conningpaste, self.ConningPaste)
+        self.Results = wx.Button(self, -1, "3. Show Results and Process Powerpoint")
+        self.Bind(wx.EVT_BUTTON, self.results, self.Results)
+
         # Use a sizer to layout the controls, stacked vertically 10 pix border
         self.sizer = wx.BoxSizer(wx.VERTICAL)
         self.sizer.Add(self.vs, 0, wx.ALL, 10)
-        self.sizer.Add(self.dirout, 0, wx.ALL, 10)
-        self.sizer.Add(self.Paste, 0,wx.ALL, 10)
+        self.sizer.Add(self.Dirout, 0, wx.ALL, 10)
+        self.sizer.Add(self.AAAPaste, 0,wx.ALL, 10)
+        #self.sizer.Add(self.ConningPaste, 0,wx.ALL, 10)
+        self.sizer.Add(self.Results, 0,wx.ALL, 10)
         self.SetSizer(self.sizer)
         self.Layout()
 
@@ -618,50 +702,66 @@ class Easy(wx.Panel):
         self.status = 'Output files in ' + self.K.outdir
         self.vs.SetLabel(self.status)
 
-    def paste(self, evt):
-        success = False
-        data = wx.TextDataObject()
+    def aaapaste(self, evt):
+        self.error_msg, self.ass_weights, self.pftype = self.processClipboard()
+        if self.pftype != 'AAA': self.error_msg = 'Please paste in AAA style assets'
+        self.processblend()
 
+    """ PJE leave this in as we might want to do Conning assets in the future
+    def conningpaste(self, evt):
+        self.error_msg, self.ass_weights, self.pftype = self.processClipboard()
+        if self.pftype != 'Conning': self.error_msg = 'Please paste in Conning style assets'
+        self.processblend()
+    """
+
+    def processblend(self):
+        json_run = {} # this becomes scenario.json
+        run_summary = {} # contains the weights and R_squared
+        if not self.error_msg:
+            for key,val in self.ass_weights.items():
+                self.error_msg, fname, blendata = self.prepare_blend(self.error_msg, key, val, self.pftype)
+                self.stderr = standarderr(blendata, self.pftype)
+                run_summary[key] = blendata
+                if not self.error_msg: blendo(self, blendata, self.K.blendir, self.K.outdir, fname, self.stderr, self.pftype) # puts ESG file in outdir
+                if not self.error_msg: json_run[key] = self.json_details(key,fname)
+
+        if not self.error_msg: # we have all the individual runs prepared
+            self.frame.SetStatusText('Files blended ok.')
+            with open(self.K.outdir + 'scenario.json','w') as jsfile:
+                json.dump(json_run,jsfile)
+            with open(self.K.outdir + 'summary.json','w') as summaryfile:
+                json.dump(run_summary,summaryfile) # may need this for html display...
+            shutil.copy(PCDIRECTORY+'census.json',self.K.outdir+'census.json') # always the same census
+
+        if self.error_msg:
+            wx.MessageBox(self.error_msg,"Error")
+        else:
+            montecarlo = Monty(self,json_run,self.K) # start the Monte Carlo engine
+
+    def results(self, evt):
+        a = SummaryResult(self) #.Show() #Modal() # create the results table
+        #a.Destroy()
+        print('1')
+        results_pic() # put the results table to a png file
+        print('2')
+        histo() # put the spectrumthisy*.P files to a histogram png
+        print('3')
+        outputfile = outputppt(self.K.outdir) # add a slide to the MPI power point or create a 1 slide ppt
+        print('4')
+        wx.MessageBox('Created summary powerpoint slide and put it in\n' + outputfile,"Message")
+        print('5')
+
+
+    def processClipboard(self):
+        data = wx.TextDataObject()
         if wx.TheClipboard.Open():
             success = wx.TheClipboard.GetData(data)
             wx.TheClipboard.Close()
         if not success:
-            error_msg = 'No data in clipboard'
-        
-        state,color = getamastate()
-        if state != 'running':
-            success = False
-            error_msg = 'Amazon server is OFF.'
+            failmsg = 'No data in clipboard'
+        else:        
+            failmsg = '' # this is success - a blank failmsg
 
-        if success:
-            error_msg, ass_weights, pftype = self.processClipboard(data)
-            json_run = {} # this becomes scenario.json
-            run_summary = {} # contains the weights and R_squared
-            if not error_msg:
-                for key,val in ass_weights.items():
-                    #print (key,val)
-                    error_msg, fname, data = self.prepare_blend(error_msg, key, val, pftype)
-                    self.stderr = standarderr(data, pftype)
-                    run_summary[key] = data
-                    if not error_msg: blendo(self, data, self.K.blendir, self.K.outdir, fname, self.stderr, pftype) # puts ESG file in outdir
-                    if not error_msg: json_run[key] = self.json_details(key,fname)
-
-            self.frame.SetStatusText('Files blended ok.')
-            if not error_msg: # we have all the individual runs prepared
-                with open(self.K.outdir + 'scenario.json','w') as jsfile:
-                    json.dump(json_run,jsfile)
-                    #self.scenario_json = json.dumps(json_run)
-                with open(self.K.outdir + 'summary.json','w') as summaryfile:
-                    json.dump(run_summary,summaryfile) # may need this for html display...
-                shutil.copy(PCDIRECTORY+'census.json',self.K.outdir+'census.json')
-
-        if error_msg:
-            wx.MessageBox(error_msg,"Error")
-        else:
-            montecarlo = Monty(self,json_run,self.K) # start the Monte Carlo engine
-
-    def processClipboard(self,data):
-        failmsg = ''
         try:
             lines = data.GetText().split('\n')
         except:
@@ -677,16 +777,22 @@ class Easy(wx.Panel):
             delete_dict = {' ':'_','|':'_','-':'_',')':'','(':'','+':'plus','&':'and'}
             deletetable = str.maketrans(delete_dict)
             heads = [i.translate(deletetable) for i in heads]
-            pftuple = namedtuple('portfolio',heads)
+            try:
+                pftuple = namedtuple('portfolio',heads)
+            except:
+                failmsg = 'Invalid paste column headers.  Did you paste the right area?'
+        if not failmsg:
             clipdata = OrderedDict()
             for line in lines[2:]: # may need a try/except here, see if it ever fails...
                 linedata = line.split('\t')
                 linedata = [flt(i) for i in linedata]
                 try:
+                    for i in [0,1]: linedata[i] = linedata[i].translate(deletetable)
                     pfdata = pftuple(*linedata)
                     clipdata[pfdata.Portfolio] = pfdata
                 except:
                     pass # there is a harmless blank line at the end, which will cause an error
+
             if set(heads) == self.aaakeys:
                 pftype = 'AAA'
                 retkeys = self.aaakeys
@@ -719,7 +825,7 @@ class Easy(wx.Panel):
         msg = ''
         self.filetype = pftype
         if self.filetype == 'Conning':
-            self.K.blendir = self.K.INDIR + 'ConningDec2019/'
+            self.K.blendir = self.K.INDIR + 'ConningDec2020/'
         else:
             self.K.blendir = self.K.INDIR +  'AAACSV/'
         fail=False
@@ -736,7 +842,7 @@ class Easy(wx.Panel):
                          ('BondsGovtShort',data.ICE_BofA_1_5_Year_US_Treasury_Index),
                          ('EquityInternationalAggressive',data.MSCI_EM_Emerging_Markets_USD),
                          ('EquityInternationalDiversified',data.MSCI_EAFE),
-                         ('EquityUSAggressive',data.NASDAQ_Composite_TR),
+                         ('EquityUSAggressive',data.NASDAQ_Composite_TR_USD),
                          ('EquityUSLargeCap',data.SandP_500_Index),
                          ('EquityUSMidcap',data.Russell_Mid_Cap_Index),
                          ('EquityUSSmallCap',data.R2000)] #)
@@ -784,7 +890,7 @@ class Easy(wx.Panel):
                           style=wx.DD_DEFAULT_STYLE
                            )
         if dlg.ShowModal() == wx.ID_OK:
-            self.K.outdir = dlg.GetPath()
+            self.K.outdir = dlg.GetPath() + '\\'
             self.makesttext()
         dlg.Destroy()
 
